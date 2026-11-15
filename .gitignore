@@ -66,3 +66,9 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# rpi5datv: keep our hand-written Makefile, ignore build output
+!src/Makefile
+src/build/
+bin/*
+!bin/.gitkeep

@@ -161,8 +161,6 @@ cat <<EOF
   Transmit a video file, looped:
       rpi5datv -i video.mp4 -l -f 437 -s 1000 -c 3/4 -n YOURCALL
 
-  A transmitting licence is required, and the raw GPIO output MUST be
-  band-pass filtered before it goes anywhere near an antenna.
 EOF
 if [ $RELOGIN_NEEDED -eq 1 ]; then
     echo

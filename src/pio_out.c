@@ -76,8 +76,12 @@ int pio_out_open(const pio_out_cfg_t *cfg)
                 break;
             fprintf(stderr, "pio_sm_config_xfer(%zu bytes x %d) failed: %s\n",
                     bytes, count, strerror(ret < 0 ? -ret : ret));
+            /* Fewer buffers first (the Pi 5 driver accepts at most 4),
+             * then smaller ones: big buffers mean fewer ioctls per second. */
             if (bytes > 0xfffc)
                 bytes = 0xfffc & ~(size_t)3;     /* largest 16-bit size */
+            else if (count > 4)
+                count = 4;
             else if (bytes > 4096)
                 bytes /= 2;
             else if (count > 2)

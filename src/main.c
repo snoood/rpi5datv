@@ -382,7 +382,7 @@ int main(int argc, char **argv)
             .div = fp.div,
             .drive = opt.power,
             .xfer_bytes = (size_t)opt.xfer_kb * 1024,
-            .xfer_count = 8,
+            .xfer_count = 4,
         };
         if (pio_out_open(&pc) < 0) {
             g_stop = 1;

@@ -97,7 +97,7 @@ static void usage(FILE *f)
 "  -d, --power 0..3       GPIO drive strength 2/4/8/12 mA (default 3)\n"
 "      --pio-div N        force the PIO clock divider (fs = 200 MHz / N)\n"
 "      --pio-max-rate MBS max PIO stream rate in MB/s for auto divider (default 9)\n"
-"      --xfer-kb N        PIO DMA buffer size in KiB (default 64)\n"
+"      --xfer-kb N        PIO DMA buffer size in KiB (default 32)\n"
 "      --plan             print the frequency plan and exit\n"
 "\n"
 "Test outputs (no Pi needed, no RF):\n"
@@ -125,7 +125,7 @@ static int parse_args(int argc, char **argv, options_t *o)
     o->ptt_gpio = -1;
     o->power = 3;
     o->pio_max_rate = 9e6;
-    o->xfer_kb = 64;
+    o->xfer_kb = 32;
     o->iq_sps = 4;
     o->audio = 1;
     o->service = "RPI5DATV";

@@ -61,12 +61,41 @@ int pio_out_open(const pio_out_cfg_t *cfg)
     }
     g_offset = (int)pio_add_program(g_pio, &rf_program);
 
-    if (pio_sm_config_xfer(g_pio, g_sm, PIO_DIR_TO_SM,
-                           (uint)cfg->xfer_bytes, (uint)cfg->xfer_count)) {
-        fprintf(stderr, "pio_sm_config_xfer failed (buffers %zu x %d)\n",
-                cfg->xfer_bytes, cfg->xfer_count);
-        pio_out_close();
-        return -1;
+    /* Set up the DMA buffers. Sizes above 0xffff bytes need the newer
+     * *_XFER32 ioctls, which older rp1-pio kernel drivers lack, so fall
+     * back to smaller buffers (and fewer of them) until the driver
+     * accepts the configuration. */
+    {
+        size_t bytes = cfg->xfer_bytes & ~(size_t)3;
+        int count = cfg->xfer_count;
+        int ret = -1;
+        for (;;) {
+            ret = pio_sm_config_xfer(g_pio, g_sm, PIO_DIR_TO_SM,
+                                     (uint)bytes, (uint)count);
+            if (ret == 0)
+                break;
+            fprintf(stderr, "pio_sm_config_xfer(%zu bytes x %d) failed: %s\n",
+                    bytes, count, strerror(ret < 0 ? -ret : ret));
+            if (bytes > 0xfffc)
+                bytes = 0xfffc & ~(size_t)3;     /* largest 16-bit size */
+            else if (bytes > 4096)
+                bytes /= 2;
+            else if (count > 2)
+                count /= 2;
+            else
+                break;
+            bytes &= ~(size_t)3;
+        }
+        if (ret != 0) {
+            fprintf(stderr, "Cannot set up PIO DMA; is the kernel up to date "
+                            "(sudo apt full-upgrade)?\n");
+            pio_out_close();
+            return -1;
+        }
+        if (bytes != cfg->xfer_bytes || count != cfg->xfer_count)
+            fprintf(stderr, "PIO DMA: using %zu-byte buffers x %d\n", bytes, count);
+        g_cfg.xfer_bytes = bytes;
+        g_cfg.xfer_count = count;
     }
 
     pio_sm_config c = pio_get_default_sm_config();

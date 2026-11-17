@@ -56,7 +56,8 @@ group applies. If the installer says `/dev/pio0` is missing, run
 sudo apt install build-essential pkg-config libavcodec-dev libavformat-dev \
     libavutil-dev libswscale-dev libswresample-dev
 make -C src          # produces bin/rpi5datv
-make -C src test     # self tests
+make -C src test     # self tests (DVB-S coder, modulator, A/V sync logic)
+make -C src e2e      # end-to-end A/V sync test (needs ffmpeg; no RF)
 ```
 
 ## Hardware
@@ -213,10 +214,25 @@ Gotchas:
   That's expected.
 - **Delay** from the source to the RF is about 1.5–2 s (muxer, start-up
   buffer and PIO queue), plus whatever the sender adds.
+- **Lip-sync is kept automatically.** Video is the master clock. Audio is
+  checked against its own timestamps on every frame, and if it is more
+  than 40 ms out, silence is inserted (audio was lost, e.g. dropped UDP
+  packets) or samples are dropped. A small hiccup costs a moment of
+  silence, not a permanent offset.
+- **Restarts and timestamp jumps are handled.** If the input's timestamps
+  jump back by more than 0.5 s, or forward by more than 3 s with no
+  audio to show that the time really passed (e.g. you stop and restart
+  streaming in OBS), rpi5datv re-synchronises and carries on from where
+  it is, instead of freezing the picture. Long gaps between pictures that
+  the audio confirms (slideshows, still sections) are kept as they are,
+  and audio that starts before the first picture stays in sync (the first
+  picture is shown a little longer).
+  With `-v` each correction is logged, with a summary at the end.
 - **Clock drift.** The source's clock and the Pi's transmit clock differ
-  slightly (typically < 50 ppm, about 0.2 s an hour). Video copes because
-  frames are re-timed to 25 fps; very long live runs (hours) are not yet
-  tested.
+  slightly (typically < 50 ppm, about 0.2 s an hour). That doesn't affect
+  lip-sync; it only means the delay creeps a little (source fast) or a
+  few null packets are sent now and then (source slow). Not yet tested
+  over multi-hour runs.
 - **CPU.** Decoding a big source (e.g. 1080p) and encoding at the same
   time uses more CPU. If `underrun-nulls` keep climbing, have the sender
   scale down first (e.g. `-vf scale=1024:576`).
@@ -282,6 +298,6 @@ install.sh            installer
 bin/rpi5datv          built executable
 src/                  source (main, source/encoder, DVB-S coder, modulator, PIO output, test card)
 src/vendor/piolib/    Raspberry Pi's piolib (BSD-3)
-src/tests/            self tests (make -C src test)
+src/tests/            self tests (make -C src test) and A/V sync end-to-end test (make -C src e2e)
 ```
 

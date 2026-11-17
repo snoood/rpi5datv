@@ -2,6 +2,7 @@
  * rpi5datv - programme source, encoder and TS multiplexer (see source.h)
  */
 #include "source.h"
+#include "avsync.h"
 #include "testcard.h"
 
 #include <math.h>
@@ -395,10 +396,9 @@ typedef struct {
     int abuf_cap;
     AVFrame *dframe;
     int have_last;            /* o->vframe holds a valid picture */
-    int64_t seg_base;         /* output frame index at segment start */
-    int64_t start_ts;         /* first video timestamp of segment */
-    double last_t;
+    avsync_t sync;            /* A/V mapping and corrections (avsync.c) */
 } filesrc_t;
+
 
 static void clear_picture(AVFrame *f)
 {
@@ -472,26 +472,25 @@ static int emit_held(filesrc_t *fsrc)
     return ret;
 }
 
+static double frame_time(AVFormatContext *ic, int idx, AVFrame *f)
+{
+    int64_t ts = f->best_effort_timestamp;
+    if (ts == AV_NOPTS_VALUE)
+        return NAN;
+    return ts * av_q2d(ic->streams[idx]->time_base);
+}
+
 static int handle_video_frame(filesrc_t *fsrc, AVFrame *f)
 {
-    AVStream *st = fsrc->ic->streams[fsrc->vidx];
-    int64_t ts = f->best_effort_timestamp;
-    double t;
-    if (ts == AV_NOPTS_VALUE) {
-        t = fsrc->last_t + 1.0 / FPS;
-    } else {
-        if (fsrc->start_ts == AV_NOPTS_VALUE)
-            fsrc->start_ts = ts;
-        t = (ts - fsrc->start_ts) * av_q2d(st->time_base);
-    }
-    if (t < 0)
-        t = 0;
-    fsrc->last_t = t;
+    out_t *o = fsrc->o;
+    avsync_video_t v = avsync_video(&fsrc->sync, frame_time(fsrc->ic, fsrc->vidx, f), o->vpts);
+    if (v.jumped && fsrc->cfg->verbose)
+        fprintf(stderr, "Input timestamps jumped %+.2f s; re-synchronising\n", v.jump_s);
 
     int ret;
     /* Output frames whose time precedes this picture show the old one. */
     while (fsrc->have_last && !*fsrc->cfg->stop &&
-           (double)(fsrc->o->vpts - fsrc->seg_base) / FPS < t - 1e-6) {
+           (double)o->vpts / FPS < v.target - 1e-6) {
         if ((ret = emit_held(fsrc)) < 0)
             return ret;
     }
@@ -515,12 +514,29 @@ static int handle_audio_frame(filesrc_t *fsrc, AVFrame *f)
         if (!fsrc->abuf)
             return AVERROR(ENOMEM);
     }
+    double s = frame_time(fsrc->ic, fsrc->aidx, f);
     uint8_t *outp[1] = { (uint8_t *)fsrc->abuf };
     int n = swr_convert(fsrc->swr, outp, need, (const uint8_t **)f->extended_data,
                         f->nb_samples);
     if (n < 0)
         return n;
-    return out_audio_push(o, fsrc->abuf, n);
+
+    avsync_audio_t a = avsync_audio(&fsrc->sync, s, n, o->a_in, o->vpts);
+    if (fsrc->cfg->verbose) {
+        if (a.jumped)
+            fprintf(stderr, "Audio timestamps jumped; re-synchronising\n");
+        else if (a.insert)
+            fprintf(stderr, "Audio behind by %.0f ms; inserted silence\n", a.error_s * 1000);
+        else if (a.skip)
+            fprintf(stderr, "Audio ahead by %.0f ms; dropping %d samples\n",
+                    -a.error_s * 1000, a.skip);
+    }
+    int ret;
+    if (a.insert > 0 && (ret = out_audio_silence(o, (int)a.insert)) < 0)
+        return ret;
+    if (a.skip >= n)
+        return 0;
+    return out_audio_push(o, fsrc->abuf + (size_t)a.skip * ch, n - a.skip);
 }
 
 static int decode_packet(filesrc_t *fsrc, AVCodecContext *dec, AVPacket *pkt, int is_video)
@@ -561,9 +577,7 @@ static int end_segment(filesrc_t *fsrc)
                 return ret;
         }
     }
-    fsrc->seg_base = o->vpts;
-    fsrc->start_ts = AV_NOPTS_VALUE;
-    fsrc->last_t = 0;
+    avsync_new_segment(&fsrc->sync);   /* next video frame re-bases */
     return 0;
 }
 
@@ -574,7 +588,7 @@ static int run_file(source_cfg_t *cfg, out_t *o)
     fsrc.cfg = cfg;
     fsrc.o = o;
     fsrc.vidx = fsrc.aidx = -1;
-    fsrc.start_ts = AV_NOPTS_VALUE;
+    avsync_init(&fsrc.sync, FPS, AUDIO_RATE);
     int ret;
 
     if ((ret = avformat_open_input(&fsrc.ic, cfg->input, NULL, NULL)) < 0) {
@@ -667,6 +681,9 @@ static int run_file(source_cfg_t *cfg, out_t *o)
             break;
     }
     av_packet_free(&pkt);
+    if (cfg->verbose && (fsrc.sync.n_rebase || fsrc.sync.n_afix))
+        fprintf(stderr, "Input re-synchronisations: %ld timestamp jumps, %ld audio corrections\n",
+                fsrc.sync.n_rebase, fsrc.sync.n_afix);
 
 done:
     av_frame_free(&fsrc.dframe);

@@ -67,7 +67,7 @@ typedef struct {
 static void usage(FILE *f)
 {
     fprintf(f,
-"rpi5datv %s \"%s\" - DVB-S transmitter for Raspberry Pi 5 / 500 (RP1 PIO)\n"
+"rpi5datv - DVB-S transmitter for Raspberry Pi 5 / 500 (RP1 PIO)\n"
 "\n"
 "Usage: rpi5datv (-i FILE | -t) -f MHZ [options]\n"
 "\n"
@@ -109,8 +109,7 @@ static void usage(FILE *f)
 "\n"
 "Example:\n"
 "  rpi5datv -t -s 333 -c 1/2 -f 437 -n G0ABC -p \"Portsdown\"\n"
-"  rpi5datv -i film.mp4 -l -s 1000 -c 3/4 -f 437 -x 12\n",
-        PROGRAM_VERSION, PROGRAM_CODENAME);
+"  rpi5datv -i film.mp4 -l -s 1000 -c 3/4 -f 437 -x 12\n");
 }
 
 static int parse_args(int argc, char **argv, options_t *o)
@@ -299,8 +298,8 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("rpi5datv %s \"%s\": SR %.0f kS/s, FEC %s, TS rate %.0f bit/s\n",
-           PROGRAM_VERSION, PROGRAM_CODENAME, sr / 1000, dvbs_fec_name(opt.fec), ts_rate);
+    printf("rpi5datv: SR %.0f kS/s, FEC %s, TS rate %.0f bit/s\n",
+           sr / 1000, dvbs_fec_name(opt.fec), ts_rate);
     if (need_rf)
         print_plan(&fp, sr);
     if (opt.plan_only)

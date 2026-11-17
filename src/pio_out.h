@@ -4,7 +4,8 @@
  * One PIO state machine running a single instruction, "out pins, 1",
  * with autopull: every PIO clock (200 MHz / div) one bit of the DDS
  * bitstream is placed on the RF GPIO. Data is streamed to the TX FIFO
- * with the rp1-pio kernel driver's DMA (piolib pio_sm_xfer_data).
+ * with the rp1-pio kernel driver's DMA (piolib pio_sm_xfer_data), from
+ * a dedicated writer thread issuing large calls back to back.
  */
 #ifndef RPI5DATV_PIO_OUT_H
 #define RPI5DATV_PIO_OUT_H
@@ -19,6 +20,7 @@ typedef struct {
     int drive;             /* 0..3 = 2/4/8/12 mA */
     size_t xfer_bytes;     /* DMA buffer size */
     int xfer_count;        /* number of DMA buffers */
+    size_t block_bytes;    /* bytes per pio_sm_xfer_data call (0 = 1 MiB) */
 } pio_out_cfg_t;
 
 int pio_out_open(const pio_out_cfg_t *cfg);

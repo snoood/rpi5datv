@@ -59,6 +59,7 @@ typedef struct {
     int pio_div;
     double pio_max_rate;
     int xfer_kb;
+    int block_kb;
     /* file outputs (testing without a Pi) */
     const char *ts_out;
     const char *iq_out;
@@ -98,6 +99,7 @@ static void usage(FILE *f)
 "      --pio-div N        force the PIO clock divider (fs = 200 MHz / N)\n"
 "      --pio-max-rate MBS max PIO stream rate in MB/s for auto divider (default 9)\n"
 "      --xfer-kb N        PIO DMA buffer size in KiB (default 32)\n"
+"      --pio-block-kb N   bytes per PIO DMA call in KiB (default 1024)\n"
 "      --plan             print the frequency plan and exit\n"
 "\n"
 "Test outputs (no Pi needed, no RF):\n"
@@ -126,12 +128,13 @@ static int parse_args(int argc, char **argv, options_t *o)
     o->power = 3;
     o->pio_max_rate = 9e6;
     o->xfer_kb = 32;
+    o->block_kb = 1024;
     o->iq_sps = 4;
     o->audio = 1;
     o->service = "RPI5DATV";
     o->provider = "RPI5DATV";
 
-    enum { O_PIODIV = 1000, O_PIOMAX, O_XFER, O_PLAN, O_TSOUT, O_IQOUT, O_IQSPS,
+    enum { O_PIODIV = 1000, O_PIOMAX, O_XFER, O_BLOCK, O_PLAN, O_TSOUT, O_IQOUT, O_IQSPS,
            O_RFOUT, O_DUR };
     static const struct option longopts[] = {
         { "input", required_argument, 0, 'i' },
@@ -150,6 +153,7 @@ static int parse_args(int argc, char **argv, options_t *o)
         { "pio-div", required_argument, 0, O_PIODIV },
         { "pio-max-rate", required_argument, 0, O_PIOMAX },
         { "xfer-kb", required_argument, 0, O_XFER },
+        { "pio-block-kb", required_argument, 0, O_BLOCK },
         { "plan", no_argument, 0, O_PLAN },
         { "ts-out", required_argument, 0, O_TSOUT },
         { "iq-out", required_argument, 0, O_IQOUT },
@@ -191,6 +195,7 @@ static int parse_args(int argc, char **argv, options_t *o)
         case O_PIODIV: o->pio_div = atoi(optarg); break;
         case O_PIOMAX: o->pio_max_rate = atof(optarg) * 1e6; break;
         case O_XFER: o->xfer_kb = atoi(optarg); break;
+        case O_BLOCK: o->block_kb = atoi(optarg); break;
         case O_PLAN: o->plan_only = 1; break;
         case O_TSOUT: o->ts_out = optarg; break;
         case O_IQOUT: o->iq_out = optarg; break;
@@ -220,6 +225,7 @@ static int parse_args(int argc, char **argv, options_t *o)
         return -1;
     }
     if (o->pio_div < 0 || o->pio_div > 65535 || o->xfer_kb < 4 || o->xfer_kb > 4096 ||
+        o->block_kb < 4 || o->block_kb > 65536 ||
         o->iq_sps < 1 || o->iq_sps > 64) {
         fprintf(stderr, "option out of range\n");
         return -1;
@@ -383,6 +389,7 @@ int main(int argc, char **argv)
             .drive = opt.power,
             .xfer_bytes = (size_t)opt.xfer_kb * 1024,
             .xfer_count = 4,
+            .block_bytes = (size_t)opt.block_kb * 1024,
         };
         if (pio_out_open(&pc) < 0) {
             g_stop = 1;
@@ -430,8 +437,8 @@ int main(int argc, char **argv)
     double onair_status = 0;
     int slow_reports = 0;
 
-    /* The modulator must never stall for longer than the PIO DMA buffers
-     * last (8 x 64 KiB = ~60 ms at 8 MB/s). Ask for real-time priority
+    /* The modulator must keep the PIO writer's block queue (3 x 1 MiB,
+     * ~0.37 s at 8 MB/s) from running empty. Ask for real-time priority
      * (the installer grants CAP_SYS_NICE); the encoder thread was created
      * earlier and keeps normal priority. */
     if (use_pio) {

@@ -123,6 +123,7 @@ Advanced options:
 | `--pio-div N` | force the PIO clock divider (sample rate = 200 MHz / N) | automatic |
 | `--pio-max-rate MBS` | maximum data rate to the PIO for automatic choice | 9 MB/s |
 | `--xfer-kb N` | PIO DMA buffer size in KiB (falls back to smaller sizes if the kernel refuses) | 32 |
+| `--pio-block-kb N` | data per DMA call in KiB; bigger = fewer tiny gaps in the RF | 1024 |
 
 Test outputs. Any of these turns the RF off, so you can run it on any PC:
 

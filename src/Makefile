@@ -23,13 +23,15 @@ ifeq ($(ARCH),aarch64)
 CFLAGS += -mcpu=cortex-a76
 endif
 
-APP_SRC := main.c dvbs.c modulator.c ringbuf.c source.c testcard.c pio_out.c
+APP_SRC := main.c dvbs.c modulator.c ringbuf.c source.c avsync.c testcard.c pio_out.c
 APP_OBJ := $(APP_SRC:%.c=$(BUILDDIR)/%.o) $(PIOLIB_SRC:%.c=$(BUILDDIR)/%.o)
 
 TEST_SRC := tests/test_dvbs.c dvbs.c modulator.c
 TEST_BIN := $(BUILDDIR)/test_dvbs
+AVTEST_SRC := tests/test_avsync.c avsync.c
+AVTEST_BIN := $(BUILDDIR)/test_avsync
 
-.PHONY: all clean test install
+.PHONY: all clean test e2e install
 
 all: $(BINDIR)/rpi5datv
 
@@ -53,8 +55,18 @@ $(TEST_BIN): $(TEST_SRC) $(wildcard *.h)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -o $@ $(TEST_SRC) $(LDLIBS)
 
-test: $(TEST_BIN)
+$(AVTEST_BIN): $(AVTEST_SRC) avsync.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $(AVTEST_SRC) $(LDLIBS)
+
+test: $(TEST_BIN) $(AVTEST_BIN)
 	./$(TEST_BIN)
+	./$(AVTEST_BIN)
+
+# End-to-end A/V sync check through the real decoder/encoder/muxer
+# (needs ffmpeg + ffprobe; no RF). See tests/avsync_e2e.sh.
+e2e: $(BINDIR)/rpi5datv
+	tests/avsync_e2e.sh $(BINDIR)/rpi5datv
 
 PREFIX ?= /usr/local
 install: $(BINDIR)/rpi5datv

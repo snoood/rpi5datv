@@ -1,14 +1,7 @@
 /*
  * rpi5datv - DVB-S digital television transmitter for the Raspberry Pi 5 / 500
  *
- * One executable: video file or test card -> H.264/MP2 -> DVB transport
- * stream -> DVB-S channel coding -> QPSK -> RF on a GPIO pin via RP1 PIO.
- *
- * Derived in spirit from rpidatv by Evariste Courjaud F5OEO (GPL),
- * channel coding after Brian Jordan G4EWJ's dvbsenco. GPL v2 or later.
- *
- * Transmitting needs an appropriate licence (e.g. amateur radio) and
- * proper filtering: the raw GPIO output is rich in harmonics and images.
+ * Derived from rpidatv by Evariste Courjaud F5OEO (GPL),
  */
 #include <errno.h>
 #include <getopt.h>
@@ -29,7 +22,8 @@
 #include "ringbuf.h"
 #include "source.h"
 
-#define PROGRAM_VERSION "1.0.0"
+#define PROGRAM_VERSION  "1.9.0"
+#define PROGRAM_CODENAME "Bounce On My Boys Buffer"
 
 static volatile int g_stop;
 static ringbuf_t g_ring;
@@ -73,7 +67,7 @@ typedef struct {
 static void usage(FILE *f)
 {
     fprintf(f,
-"rpi5datv %s - DVB-S transmitter for Raspberry Pi 5 / 500 (RP1 PIO)\n"
+"rpi5datv %s \"%s\" - DVB-S transmitter for Raspberry Pi 5 / 500 (RP1 PIO)\n"
 "\n"
 "Usage: rpi5datv (-i FILE | -t) -f MHZ [options]\n"
 "\n"
@@ -98,7 +92,7 @@ static void usage(FILE *f)
 "  -d, --power 0..3       GPIO drive strength 2/4/8/12 mA (default 3)\n"
 "      --pio-div N        force the PIO clock divider (fs = 200 MHz / N)\n"
 "      --pio-max-rate MBS max PIO stream rate in MB/s for auto divider (default 9)\n"
-"      --xfer-kb N        PIO DMA buffer size in KiB (default 32)\n"
+"      --xfer-kb N        PIO DMA buffer size in KiB (default 63)\n"
 "      --pio-block-kb N   bytes per PIO DMA call in KiB (default 1024)\n"
 "      --plan             print the frequency plan and exit\n"
 "\n"
@@ -110,12 +104,13 @@ static void usage(FILE *f)
 "      --duration SEC     stop after SEC seconds of transmitted signal\n"
 "\n"
 "  -v, --verbose\n"
+"  -V, --version\n"
 "  -h, --help\n"
 "\n"
 "Example:\n"
 "  rpi5datv -t -s 333 -c 1/2 -f 437 -n G0ABC -p \"Portsdown\"\n"
 "  rpi5datv -i film.mp4 -l -s 1000 -c 3/4 -f 437 -x 12\n",
-        PROGRAM_VERSION);
+        PROGRAM_VERSION, PROGRAM_CODENAME);
 }
 
 static int parse_args(int argc, char **argv, options_t *o)
@@ -127,7 +122,7 @@ static int parse_args(int argc, char **argv, options_t *o)
     o->ptt_gpio = -1;
     o->power = 3;
     o->pio_max_rate = 9e6;
-    o->xfer_kb = 32;
+    o->xfer_kb = 63;
     o->block_kb = 1024;
     o->iq_sps = 4;
     o->audio = 1;
@@ -161,12 +156,13 @@ static int parse_args(int argc, char **argv, options_t *o)
         { "rf-out", required_argument, 0, O_RFOUT },
         { "duration", required_argument, 0, O_DUR },
         { "verbose", no_argument, 0, 'v' },
+        { "version", no_argument, 0, 'V' },
         { "help", no_argument, 0, 'h' },
         { 0, 0, 0, 0 }
     };
 
     int c;
-    while ((c = getopt_long(argc, argv, "i:tln:p:aW:s:c:f:x:P:d:vh", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "i:tln:p:aW:s:c:f:x:P:d:vVh", longopts, NULL)) != -1) {
         switch (c) {
         case 'i': o->input = optarg; break;
         case 't': o->testcard = 1; break;
@@ -203,6 +199,7 @@ static int parse_args(int argc, char **argv, options_t *o)
         case O_RFOUT: o->rf_out = optarg; break;
         case O_DUR: o->duration = atof(optarg); break;
         case 'v': o->verbose = 1; break;
+        case 'V': printf("rpi5datv %s \"%s\"\n", PROGRAM_VERSION, PROGRAM_CODENAME); exit(0);
         case 'h': usage(stdout); exit(0);
         default: usage(stderr); return -1;
         }
@@ -302,8 +299,8 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("rpi5datv %s: SR %.0f kS/s, FEC %s, TS rate %.0f bit/s\n",
-           PROGRAM_VERSION, sr / 1000, dvbs_fec_name(opt.fec), ts_rate);
+    printf("rpi5datv %s \"%s\": SR %.0f kS/s, FEC %s, TS rate %.0f bit/s\n",
+           PROGRAM_VERSION, PROGRAM_CODENAME, sr / 1000, dvbs_fec_name(opt.fec), ts_rate);
     if (need_rf)
         print_plan(&fp, sr);
     if (opt.plan_only)

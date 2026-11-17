@@ -1,10 +1,13 @@
 # rpi5datv
 
 A DVB-S digital television transmitter for the **Raspberry Pi 5 / Pi 500**,
-in a single executable. It takes a video file (or a built-in test card),
-encodes it to H.264, multiplexes it into a DVB transport stream, applies
+in a single executable. It takes a video file, a live stream (named pipe,
+stdin or network URL) or a built-in test card, encodes it to H.264 on the
+fly, multiplexes it into a DVB transport stream, applies
 DVB-S channel coding and puts the QPSK-modulated RF signal straight out of
 a GPIO pin using the Pi 5's RP1 PIO.
+
+Current version: **1.9.0 "Bounce On My Boys Buffer"**. 
 
 It is a 64-bit rewrite of [rpidatv](https://github.com/F5OEO/rpidatv)
 (F5OEO), which targeted the Pi 3.
@@ -99,7 +102,7 @@ Stop with **Ctrl-C**. The RF pin is released (and PTT dropped) on exit.
 
 | Option | Meaning | Default |
 |---|---|---|
-| `-i, --input FILE` | video file to send (MP4 H.264/AAC preferred; anything FFmpeg can decode works) | |
+| `-i, --input FILE` | video file, named pipe, `pipe:0` (stdin) or stream URL to send (MP4 H.264/AAC preferred for files; anything FFmpeg can decode works) | |
 | `-t, --testcard` | send the built-in test card (overrides `-i`) | |
 | `-l, --loop` | loop the video file | off |
 | `-f, --frequency MHZ` | RF output frequency in MHz | required |
@@ -113,6 +116,7 @@ Stop with **Ctrl-C**. The RF pin is released (and PTT dropped) on exit.
 | `-a, --no-audio` | send no audio track | audio on |
 | `-W, --size WxH` | picture size | from bit rate |
 | `-v, --verbose` | status line every 2 s, encoder logs | |
+| `-V, --version` | print the version | |
 | `-h, --help` | help | |
 
 Advanced options:
@@ -122,7 +126,7 @@ Advanced options:
 | `--plan` | print the frequency plan and exit | |
 | `--pio-div N` | force the PIO clock divider (sample rate = 200 MHz / N) | automatic |
 | `--pio-max-rate MBS` | maximum data rate to the PIO for automatic choice | 9 MB/s |
-| `--xfer-kb N` | PIO DMA buffer size in KiB (falls back to smaller sizes if the kernel refuses) | 32 |
+| `--xfer-kb N` | PIO DMA buffer size in KiB (falls back to smaller sizes if the kernel refuses) | 63 |
 | `--pio-block-kb N` | data per DMA call in KiB; bigger = fewer tiny gaps in the RF | 1024 |
 
 Test outputs. Any of these turns the RF off, so you can run it on any PC:
@@ -137,6 +141,85 @@ Test outputs. Any of these turns the RF off, so you can run it on any PC:
 ```bash
 rpi5datv -t -s 333 --ts-out test.ts --duration 10 && ffplay test.ts
 ```
+
+### Live input (pipes and network streams)
+
+Video is decoded and re-encoded **on the fly**, in step with the RF: there
+is no pre-encoding pass and no intermediate file. Whatever you give to
+`-i` is opened by FFmpeg, so besides files it accepts a named pipe
+(FIFO), standard input (`pipe:0`) or a network URL. This lets you feed
+live video from another program, a camera or another machine.
+
+The input is always re-encoded to fit the channel, so its own codec, size,
+frame rate and bit rate don't matter.
+
+**Named pipe** (a second program writes, rpi5datv reads):
+
+```bash
+mkfifo /tmp/tx.fifo
+rpi5datv -i /tmp/tx.fifo -f 437 -s 333 -n G0ABC &
+ffmpeg -re -i film.mkv -c:v libx264 -preset ultrafast -c:a aac -f mpegts -y /tmp/tx.fifo
+```
+
+**Standard input:**
+
+```bash
+ffmpeg -re -i film.mkv -c:v libx264 -preset ultrafast -c:a aac -f mpegts - \
+    | rpi5datv -i pipe:0 -f 437 -s 333 -n G0ABC
+```
+
+**Pi camera** (untested):
+
+```bash
+rpicam-vid -t 0 --width 1280 --height 720 --framerate 25 \
+    --codec libav --libav-format mpegts -o - \
+    | rpi5datv -i pipe:0 -f 437 -s 333 -n G0ABC
+```
+
+**Network stream** from OBS, ffmpeg or a camera on another machine
+(untested; Raspberry Pi OS's FFmpeg includes these protocols):
+
+```bash
+rpi5datv -i udp://@:1234 -f 437 -s 333 -n G0ABC           # MPEG-TS over UDP
+rpi5datv -i "srt://0.0.0.0:9000?mode=listener" -f 437 -s 333 -n G0ABC
+rpi5datv -i rtmp://server/live/key -f 437 -s 333 -n G0ABC
+```
+
+Try a live source without RF first with `--ts-out test.ts --duration 10`,
+then play `test.ts`.
+
+Gotchas:
+
+- **Use a streamable container.** MPEG-TS is the safest; Matroska, FLV and
+  NUT also work. Plain MP4 does not work through a pipe (its index is
+  written at the end) unless it is fragmented. A raw `.h264` stream has
+  no timestamps, so use MPEG-TS instead.
+- **Use `pipe:0` for stdin**, not `-` (that shortcut belongs to the
+  `ffmpeg` command, not the library rpi5datv uses).
+- **Send at real time.** When feeding a file through a pipe, give the
+  sending `ffmpeg` `-re`. Without it the sender runs ahead and is simply
+  held back by the pipe, which works but the pipe fills up with seconds
+  of video and the delay grows.
+- **No `-l` (loop)** with pipes or streams: they can't seek back to the
+  start.
+- **Start order.** Either program can be started first: a writer to a
+  FIFO blocks until rpi5datv opens it, and rpi5datv waits up to 15 s for
+  the source before starting the signal. If the source takes longer, it
+  sends null packets until the video arrives.
+- **When the source ends**, rpi5datv ends too. If the source stalls,
+  rpi5datv keeps the carrier up with null packets (`underrun-nulls` in the
+  status line) until data comes back.
+- **The source program dies with "Broken pipe"** when rpi5datv stops.
+  That's expected.
+- **Delay** from the source to the RF is about 1.5–2 s (muxer, start-up
+  buffer and PIO queue), plus whatever the sender adds.
+- **Clock drift.** The source's clock and the Pi's transmit clock differ
+  slightly (typically < 50 ppm, about 0.2 s an hour). Video copes because
+  frames are re-timed to 25 fps; very long live runs (hours) are not yet
+  tested.
+- **CPU.** Decoding a big source (e.g. 1080p) and encoding at the same
+  time uses more CPU. If `underrun-nulls` keep climbing, have the sender
+  scale down first (e.g. `-vf scale=1024:576`).
 
 ### Picture and sound
 
@@ -188,6 +271,8 @@ RF plan: 437.000000 MHz = 7 x 66.667 MHz - 29.666667 MHz (inverted image, compen
 | `Cannot open /dev/pio0` | Not a Pi 5, an old kernel/EEPROM (`sudo apt full-upgrade`, `./install.sh --eeprom`, reboot), or not in the `gpio` group (log out and back in) |
 | `FFmpeg development libraries not found` when building | run `./install.sh`, or install the `lib*-dev` packages listed above |
 | `No H.264 encoder available` | libavcodec without libx264; Raspberry Pi OS's FFmpeg includes it |
+| Live input: nothing happens / `Invalid data found` | the writer hasn't started, or the format isn't streamable: send MPEG-TS (`-f mpegts`) |
+| Live input: `underrun-nulls` keep rising | the source is slower than real time or the Pi is overloaded: scale the source down before sending |
 | Receiver does not lock | check frequency, SR and FEC match; check `--plan` MER; make sure the receiver isn't overloaded (the GPIO is very close) |
 
 ## Layout

@@ -71,6 +71,16 @@ The output is weak (well below a milliwatt on 70 cm) and is an *image*
 of a synthesised carrier, so filter it and add an amplifier for anything
 beyond the bench.
 
+`hardware/` has KiCad schematics (with PDFs) for cabling the GPIO
+straight into a receiver: `rpi5datv-tuner-link` (this DVB-S output; a
+DVB-S receiver is needed — an ordinary terrestrial TV tuner can't decode
+DVB-S) and `rpi5datv-dvbt-dac` (the experimental DVB-T output below).
+
+**Experimental: DVB-T for ordinary TVs.** `experiments/dvbt/` makes DVB-T
+(2k, QPSK 1/2, 8 MHz) from a 4-bit resistor DAC on GPIO 22–25, played
+gap-free by two PIO state machines, received on 474 MHz (UK channel 21).
+Precomputed loops only for now; see `experiments/dvbt/README.md`.
+
 ## Usage
 
 ```

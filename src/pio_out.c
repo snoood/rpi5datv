@@ -12,8 +12,9 @@
 
 #include "piolib.h"
 
-/* pioasm: "out pins, 1" = 0x6001 (OUT, dest PINS, bit count 1) */
-static const uint16_t rf_program_instructions[] = { 0x6001 };
+/* pioasm: "out pins, N" = 0x6000 | N (OUT, dest PINS, bit count N);
+ * N = 1 for the 1-bit DDS, set in pio_out_open */
+static uint16_t rf_program_instructions[] = { 0x6001 };
 static const pio_program_t rf_program = {
     .instructions = rf_program_instructions,
     .length = 1,
@@ -24,6 +25,7 @@ static PIO g_pio;
 static int g_sm = -1;
 static int g_offset = -1;
 static pio_out_cfg_t g_cfg;
+static uint32_t g_pinmask;           /* the output pins */
 
 /*
  * Block queue between the modulator (pio_out_write) and the writer thread.
@@ -106,15 +108,24 @@ static void *writer_thread(void *arg)
 int pio_out_open(const pio_out_cfg_t *cfg)
 {
     g_cfg = *cfg;
+    const int npins = cfg->npins > 0 ? cfg->npins : 1;
+    const int pull = cfg->pull_bits > 0 ? cfg->pull_bits : 32;
+    g_cfg.npins = npins;
 
-    if (cfg->rf_gpio < 0 || cfg->rf_gpio > 27) {
-        fprintf(stderr, "RF GPIO must be 0..27 (header GPIOs)\n");
+    if (cfg->rf_gpio < 0 || cfg->rf_gpio + npins - 1 > 27) {
+        fprintf(stderr, "RF GPIO%s must be 0..27 (header GPIOs)\n", npins > 1 ? "s" : "");
         return -1;
     }
-    if (cfg->ptt_gpio == cfg->rf_gpio) {
-        fprintf(stderr, "PTT GPIO must differ from the RF GPIO\n");
+    if (npins > 8 || pull > 32 || pull % npins) {
+        fprintf(stderr, "PIO: %d pins with %d bits per word is not supported\n", npins, pull);
         return -1;
     }
+    if (cfg->ptt_gpio >= cfg->rf_gpio && cfg->ptt_gpio < cfg->rf_gpio + npins) {
+        fprintf(stderr, "PTT GPIO must differ from the RF GPIO%s\n", npins > 1 ? "s" : "");
+        return -1;
+    }
+    g_pinmask = ((1u << npins) - 1) << cfg->rf_gpio;
+    rf_program_instructions[0] = (uint16_t)(0x6000 | npins);
 
     g_pio = pio_open(0);
     if (PIO_IS_ERR(g_pio)) {
@@ -185,16 +196,19 @@ int pio_out_open(const pio_out_cfg_t *cfg)
     }
 
     pio_sm_config c = pio_get_default_sm_config();
-    sm_config_set_out_pins(&c, (uint)cfg->rf_gpio, 1);
+    sm_config_set_out_pins(&c, (uint)cfg->rf_gpio, (uint)npins);
     sm_config_set_wrap(&c, (uint)g_offset, (uint)g_offset);
-    sm_config_set_out_shift(&c, true /* LSB first */, true /* autopull */, 32);
+    sm_config_set_out_shift(&c, true /* LSB first */, true /* autopull */, (uint)pull);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
     sm_config_set_clkdiv_int_frac(&c, (uint16_t)cfg->div, 0);
 
-    pio_gpio_init(g_pio, (uint)cfg->rf_gpio);
-    gpio_set_drive_strength((uint)cfg->rf_gpio, (enum gpio_drive_strength)(cfg->drive & 3));
-    pio_sm_set_pins_with_mask(g_pio, (uint)g_sm, 0, 1u << cfg->rf_gpio);
-    pio_sm_set_consecutive_pindirs(g_pio, (uint)g_sm, (uint)cfg->rf_gpio, 1, true);
+    for (int i = 0; i < npins; i++) {
+        pio_gpio_init(g_pio, (uint)(cfg->rf_gpio + i));
+        gpio_set_drive_strength((uint)(cfg->rf_gpio + i),
+                                (enum gpio_drive_strength)(cfg->drive & 3));
+    }
+    pio_sm_set_pins_with_mask(g_pio, (uint)g_sm, 0, g_pinmask);
+    pio_sm_set_consecutive_pindirs(g_pio, (uint)g_sm, (uint)cfg->rf_gpio, (uint)npins, true);
 
     if (cfg->ptt_gpio >= 0) {
         pio_gpio_init(g_pio, (uint)cfg->ptt_gpio);
@@ -292,9 +306,10 @@ void pio_out_close(void)
     }
     if (g_sm >= 0) {
         pio_sm_set_enabled(g_pio, (uint)g_sm, false);
-        /* RF pin low then high impedance; PTT off */
-        pio_sm_set_pins_with_mask(g_pio, (uint)g_sm, 0, 1u << g_cfg.rf_gpio);
-        pio_sm_set_consecutive_pindirs(g_pio, (uint)g_sm, (uint)g_cfg.rf_gpio, 1, false);
+        /* RF pin(s) low then high impedance; PTT off */
+        pio_sm_set_pins_with_mask(g_pio, (uint)g_sm, 0, g_pinmask);
+        pio_sm_set_consecutive_pindirs(g_pio, (uint)g_sm, (uint)g_cfg.rf_gpio,
+                                       (uint)g_cfg.npins, false);
         if (g_cfg.ptt_gpio >= 0) {
             pio_sm_set_pins_with_mask(g_pio, (uint)g_sm, 0, 1u << g_cfg.ptt_gpio);
         }

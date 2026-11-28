@@ -67,6 +67,9 @@ vcpkg_installed/
 Testing/
 .cache/
 
+**/*-info-cache
+hardware/rpi5datv-dvbt-dac-backups
+
 # rpi5datv: keep our hand-written Makefile, ignore build output
 !src/Makefile
 src/build/
